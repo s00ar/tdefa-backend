@@ -5,6 +5,10 @@ let pool;
 let activeConfig;
 
 const serialize = (value) => JSON.stringify(value ?? null);
+const envFlagEnabled = (value, fallback = false) => {
+  if (value === undefined) return fallback;
+  return ["1", "true", "yes", "on"].includes(String(value).trim().toLowerCase());
+};
 
 const parseJson = (value, fallback) => {
   if (!value) return fallback;
@@ -247,10 +251,27 @@ const connectPool = async (config) => {
 
 export const initializeDatabase = async (options = {}) => {
   const config = getDbConfig(options.config);
-  await ensureDatabase(config);
-  const db = await connectPool(config);
-  await createSchema(db);
-  if (options.seed !== false) {
+  const shouldCreateDatabase = options.createDatabase ?? envFlagEnabled(process.env.DB_AUTO_CREATE, false);
+  const shouldSeed = options.seed ?? envFlagEnabled(process.env.DB_SEED, false);
+
+  if (shouldCreateDatabase) {
+    await ensureDatabase(config);
+  }
+
+  let db;
+  try {
+    db = await connectPool(config);
+    await createSchema(db);
+  } catch (error) {
+    if (!shouldCreateDatabase && error?.code === "ER_BAD_DB_ERROR") {
+      throw new Error(
+        `Database "${config.database}" does not exist. Create it manually or set DB_AUTO_CREATE=true for the initial bootstrap.`
+      );
+    }
+    throw error;
+  }
+
+  if (shouldSeed) {
     await seedDatabase(db);
   }
   return config;

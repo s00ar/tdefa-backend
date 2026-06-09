@@ -1,7 +1,7 @@
 import { closePool, initializeDatabase, seedDatabase } from "./db.js";
 
 try {
-  const config = await initializeDatabase();
+  const config = await initializeDatabase({ seed: false, createDatabase: true });
   await seedDatabase();
   console.log(`Seed sincronizado en ${config.database}`);
 } catch (error) {
