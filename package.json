@@ -1,0 +1,28 @@
+{
+  "name": "tdefa-backend",
+  "version": "1.0.0",
+  "description": "Node.js + MySQL API for the TDEFA planilleros app.",
+  "type": "module",
+  "main": "app.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node app.js",
+    "dev": "node --watch app.js",
+    "seed": "node seed.js",
+    "seed:matches": "npm run seed",
+    "test": "node --test tests/unit/*.js",
+    "test:integration": "node --test tests/integration/*.js",
+    "test:smoke": "node --test tests/smoke/*.js",
+    "test:all": "npm run test && npm run test:integration && npm run test:smoke"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "mysql2": "^3.22.5"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.2"
+  }
+}

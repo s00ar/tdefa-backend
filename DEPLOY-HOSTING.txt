@@ -1,0 +1,14 @@
+Contenido del repo:
+
+- `index.js`: entrypoint listo para hosting Node.js
+- `server/`: API Express + MySQL que atiende `/api`
+- `public/`: opcional, para subir el frontend compilado si quieres servirlo desde este repo
+- `package.json`: scripts de arranque, seed y tests
+
+Notas:
+
+- La API acepta `PORT` y `API_PORT`.
+- Variables esperadas: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`.
+- `DB_AUTO_CREATE=true` solo si el usuario MySQL puede crear la base automaticamente.
+- `DB_SEED=true` solo si quieres cargar datos demo al arrancar.
+- Esta app no es estatica: para que partidos y planillas funcionen, el hosting debe soportar Node.js y MySQL.
