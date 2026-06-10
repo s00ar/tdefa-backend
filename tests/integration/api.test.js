@@ -29,6 +29,156 @@ test("GET /api/matches returns seeded matches filtered by planillero", async () 
   assert.equal(data[5].id, "m_2002");
 });
 
+test("planillero CRUD persists each creation exactly once", async () => {
+  const payload = {
+    name: "Alta Integracion",
+    username: "alta.integracion",
+    email: "alta.integracion@tdefa.local",
+    phone: "+54 11 5555 0101",
+    dni: "39000101",
+    status: "activo",
+    assignedMatchesCount: 0,
+    completedMatchesCount: 0,
+  };
+
+  const created = await fetchJson(`${api.baseUrl}/planilleros`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  assert.equal(created.response.status, 201);
+  assert.match(created.data.id, /^u_plan_/);
+
+  const listed = await fetchJson(`${api.baseUrl}/planilleros`);
+  const matches = listed.data.filter((item) => item.username === payload.username);
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].email, payload.email);
+
+  const loaded = await fetchJson(`${api.baseUrl}/planilleros/${created.data.id}`);
+  assert.equal(loaded.response.status, 200);
+  assert.equal(loaded.data.name, payload.name);
+
+  const updated = await fetchJson(`${api.baseUrl}/planilleros/${created.data.id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ status: "inactivo", phone: "+54 11 5555 0202" }),
+  });
+  assert.equal(updated.response.status, 200);
+  assert.equal(updated.data.status, "inactivo");
+  assert.equal(updated.data.phone, "+54 11 5555 0202");
+
+  const duplicate = await fetchJson(`${api.baseUrl}/planilleros`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  assert.equal(duplicate.response.status, 409);
+
+  const removed = await fetch(`${api.baseUrl}/planilleros/${created.data.id}`, {
+    method: "DELETE",
+  });
+  assert.equal(removed.status, 204);
+
+  const missing = await fetchJson(`${api.baseUrl}/planilleros/${created.data.id}`);
+  assert.equal(missing.response.status, 404);
+});
+
+test("tournament and team CRUD persists changes and allows deletion when unused", async () => {
+  const tournament = await fetchJson(`${api.baseUrl}/tournaments`, {
+    method: "POST",
+    body: JSON.stringify({
+      name: "Torneo CRUD",
+      season: "2026",
+      status: "activo",
+      startDate: "2026-07-01",
+      endDate: "2026-09-30",
+    }),
+  });
+  assert.equal(tournament.response.status, 201);
+
+  const updatedTournament = await fetchJson(`${api.baseUrl}/tournaments/${tournament.data.id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name: "Torneo CRUD Actualizado", status: "inactivo" }),
+  });
+  assert.equal(updatedTournament.response.status, 200);
+  assert.equal(updatedTournament.data.name, "Torneo CRUD Actualizado");
+  assert.equal(updatedTournament.data.status, "inactivo");
+
+  const team = await fetchJson(`${api.baseUrl}/teams`, {
+    method: "POST",
+    body: JSON.stringify({
+      name: "Equipo CRUD",
+      shortName: "ECR",
+      city: "Pilar",
+      status: "activo",
+    }),
+  });
+  assert.equal(team.response.status, 201);
+
+  const updatedTeam = await fetchJson(`${api.baseUrl}/teams/${team.data.id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name: "Equipo CRUD Actualizado", shortName: "ECA" }),
+  });
+  assert.equal(updatedTeam.response.status, 200);
+  assert.equal(updatedTeam.data.shortName, "ECA");
+
+  const removedTeam = await fetch(`${api.baseUrl}/teams/${team.data.id}`, { method: "DELETE" });
+  const removedTournament = await fetch(`${api.baseUrl}/tournaments/${tournament.data.id}`, {
+    method: "DELETE",
+  });
+  assert.equal(removedTeam.status, 204);
+  assert.equal(removedTournament.status, 204);
+});
+
+test("POST /api/matches creates the match, sheet and planillero assignment", async () => {
+  const tournaments = await fetchJson(`${api.baseUrl}/tournaments`);
+  const teams = await fetchJson(`${api.baseUrl}/teams`);
+  const tournament = tournaments.data.find((item) => item.name === "Torneo Senior A");
+  const homeTeam = teams.data.find((item) => item.id === "t_1");
+  const awayTeam = teams.data.find((item) => item.id === "t_2");
+
+  const created = await fetchJson(`${api.baseUrl}/matches`, {
+    method: "POST",
+    body: JSON.stringify({
+      tournamentId: tournament.id,
+      dateIso: "2026-07-01",
+      time: "19:30",
+      venue: "Sede Test",
+      pitch: "Cancha 9",
+      homeTeamId: homeTeam.id,
+      awayTeamId: awayTeam.id,
+      assignedPlanilleroId: "u_plan_2",
+    }),
+  });
+
+  assert.equal(created.response.status, 201);
+  assert.equal(created.data.status, "pendiente");
+  assert.deepEqual(created.data.score, { home: 0, away: 0 });
+  assert.equal(created.data.assignedPlanilleroId, "u_plan_2");
+
+  const assigned = await fetchJson(
+    `${api.baseUrl}/matches?assignedPlanilleroId=u_plan_2`
+  );
+  assert.equal(
+    assigned.data.filter((item) => item.id === created.data.id).length,
+    1
+  );
+
+  const sheet = await fetchJson(`${api.baseUrl}/sheets/${created.data.id}`);
+  assert.equal(sheet.response.status, 200);
+  assert.deepEqual(sheet.data.homePlayers, []);
+  assert.deepEqual(sheet.data.awayPlayers, []);
+
+  const planillero = await fetchJson(`${api.baseUrl}/planilleros/u_plan_2`);
+  assert.equal(planillero.data.assignedMatchesCount, 3);
+
+  const blockedTournamentDelete = await fetch(`${api.baseUrl}/tournaments/${tournament.id}`, {
+    method: "DELETE",
+  });
+  const blockedTeamDelete = await fetch(`${api.baseUrl}/teams/${homeTeam.id}`, {
+    method: "DELETE",
+  });
+  assert.equal(blockedTournamentDelete.status, 409);
+  assert.equal(blockedTeamDelete.status, 409);
+});
+
 test("frontend match mutations persist score, observations and player fields in MySQL", async () => {
   const initialSheet = await fetchJson(`${api.baseUrl}/sheets/m_1002`);
   assert.equal(initialSheet.response.status, 200);

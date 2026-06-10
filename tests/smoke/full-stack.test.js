@@ -1,11 +1,23 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import net from "node:net";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+
+const getAvailablePort = () =>
+  new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      server.close((error) => (error ? reject(error) : resolve(port)));
+    });
+  });
 
 const waitFor = async (check, timeoutMs = 30000) => {
   const startedAt = Date.now();
@@ -33,11 +45,12 @@ test(
   "smoke boot: the API starts from the repository root with seeded data",
   { timeout: 45000 },
   async () => {
+    const apiPort = await getAvailablePort();
     const apiProcess = spawn("node", ["index.js"], {
       cwd: appRoot,
       env: {
         ...process.env,
-        API_PORT: "3001",
+        API_PORT: String(apiPort),
         DB_HOST: "127.0.0.1",
         DB_PORT: "3306",
         DB_USER: "root",
@@ -52,13 +65,13 @@ test(
 
     try {
       const apiHealth = await waitFor(async () => {
-        const response = await fetch("http://127.0.0.1:3001/api/health");
+        const response = await fetch(`http://127.0.0.1:${apiPort}/api/health`);
         if (!response.ok) throw new Error(`Health status ${response.status}`);
         return response.json();
       });
 
       const matches = await waitFor(async () => {
-        const response = await fetch("http://127.0.0.1:3001/api/matches");
+        const response = await fetch(`http://127.0.0.1:${apiPort}/api/matches`);
         if (!response.ok) throw new Error(`Matches status ${response.status}`);
         return response.json();
       });

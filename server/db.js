@@ -1,4 +1,5 @@
 import mysql from "mysql2/promise";
+import { createHash } from "node:crypto";
 import { seedMatches, seedPlanilleros, seedSheets } from "./seed-data.js";
 
 let pool;
@@ -20,6 +21,13 @@ const parseJson = (value, fallback) => {
 };
 
 const escapeIdentifier = (value) => `\`${String(value).replaceAll("`", "``")}\``;
+const catalogId = (prefix, value) =>
+  `${prefix}_${createHash("sha1").update(String(value)).digest("hex").slice(0, 16)}`;
+const normalizeDbHost = (value) => {
+  const host = String(value ?? "").trim();
+  if (!host) return "127.0.0.1";
+  return host.toLowerCase() === "localhost" ? "127.0.0.1" : host;
+};
 
 const sameConfig = (left, right) =>
   Boolean(left) &&
@@ -31,7 +39,7 @@ const sameConfig = (left, right) =>
   left.database === right.database;
 
 export const getDbConfig = (overrides = {}) => ({
-  host: overrides.host ?? process.env.DB_HOST ?? "127.0.0.1",
+  host: normalizeDbHost(overrides.host ?? process.env.DB_HOST ?? "127.0.0.1"),
   port: Number(overrides.port ?? process.env.DB_PORT ?? 3306),
   user: overrides.user ?? process.env.DB_USER ?? "root",
   password: overrides.password ?? process.env.DB_PASSWORD ?? "",
@@ -136,6 +144,29 @@ const upsertSheet = async (db, item) => {
 
 const createSchema = async (db) => {
   await db.query(`
+    CREATE TABLE IF NOT EXISTS tournaments (
+      id VARCHAR(64) PRIMARY KEY,
+      name VARCHAR(160) NOT NULL UNIQUE,
+      season VARCHAR(40) NULL,
+      status ENUM('activo', 'inactivo') NOT NULL DEFAULT 'activo',
+      start_date VARCHAR(16) NULL,
+      end_date VARCHAR(16) NULL,
+      created_at_iso VARCHAR(40) NOT NULL
+    )
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS teams (
+      id VARCHAR(64) PRIMARY KEY,
+      name VARCHAR(160) NOT NULL UNIQUE,
+      short_name VARCHAR(16) NOT NULL,
+      city VARCHAR(120) NULL,
+      status ENUM('activo', 'inactivo') NOT NULL DEFAULT 'activo',
+      created_at_iso VARCHAR(40) NOT NULL
+    )
+  `);
+
+  await db.query(`
     CREATE TABLE IF NOT EXISTS planilleros (
       id VARCHAR(64) PRIMARY KEY,
       name VARCHAR(160) NOT NULL,
@@ -181,6 +212,38 @@ const createSchema = async (db) => {
   `);
 };
 
+const syncCatalogsFromMatches = async (db) => {
+  const [rows] = await db.query("SELECT tournament, home_team, away_team FROM matches");
+  const now = new Date().toISOString();
+
+  for (const row of rows) {
+    const tournamentName = String(row.tournament ?? "").trim();
+    if (tournamentName) {
+      await db.execute(
+        `INSERT IGNORE INTO tournaments (id, name, season, status, start_date, end_date, created_at_iso)
+         VALUES (?, ?, NULL, 'activo', NULL, NULL, ?)`,
+        [catalogId("tournament", tournamentName), tournamentName, now]
+      );
+    }
+
+    for (const rawTeam of [row.home_team, row.away_team]) {
+      const team = parseJson(rawTeam, {});
+      const name = String(team.name ?? "").trim();
+      if (!name) continue;
+      await db.execute(
+        `INSERT IGNORE INTO teams (id, name, short_name, city, status, created_at_iso)
+         VALUES (?, ?, ?, NULL, 'activo', ?)`,
+        [
+          String(team.id || catalogId("team", name)),
+          name,
+          String(team.shortName || name.slice(0, 3)).trim().toUpperCase(),
+          now,
+        ]
+      );
+    }
+  }
+};
+
 export const seedDatabase = async (db = getPool()) => {
   for (const item of seedPlanilleros) {
     await upsertPlanillero(db, item);
@@ -193,6 +256,8 @@ export const seedDatabase = async (db = getPool()) => {
   for (const item of Object.values(seedSheets)) {
     await upsertSheet(db, item);
   }
+
+  await syncCatalogsFromMatches(db);
 };
 
 const databaseExists = async (config) => {
@@ -262,6 +327,7 @@ export const initializeDatabase = async (options = {}) => {
   try {
     db = await connectPool(config);
     await createSchema(db);
+    await syncCatalogsFromMatches(db);
   } catch (error) {
     if (!shouldCreateDatabase && error?.code === "ER_BAD_DB_ERROR") {
       throw new Error(
@@ -324,4 +390,23 @@ export const mapSheetRow = (row) => ({
   observations: row.observations,
   incidents: parseJson(row.incidents, []),
   updatedAtIso: row.updated_at_iso,
+});
+
+export const mapTournamentRow = (row) => ({
+  id: row.id,
+  name: row.name,
+  season: row.season,
+  status: row.status,
+  startDate: row.start_date,
+  endDate: row.end_date,
+  createdAtIso: row.created_at_iso,
+});
+
+export const mapTeamRow = (row) => ({
+  id: row.id,
+  name: row.name,
+  shortName: row.short_name,
+  city: row.city,
+  status: row.status,
+  createdAtIso: row.created_at_iso,
 });

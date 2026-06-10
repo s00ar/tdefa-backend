@@ -20,6 +20,8 @@ Copy `.env.example` and set:
 - `DB_AUTO_CREATE`: set to `true` only if the DB user can create the database automatically.
 - `DB_SEED`: set to `true` only when you want demo data loaded on startup.
 
+For Hostinger you can start from `.env.hostinger.example`.
+
 ## Run locally
 
 ```bash
@@ -51,3 +53,10 @@ npm run seed
 5. If you also want this repo to serve the built frontend, copy the compiled frontend into `public/`.
 
 By default the app does not create the database and does not inject demo data during production boots.
+
+## Hostinger checklist
+
+1. Create and connect a MySQL database in Hostinger.
+2. Configure the variables from `.env.hostinger.example`.
+3. Deploy the backend and verify `https://YOUR_DOMAIN/api/health`.
+4. Point the frontend to that backend using `VITE_API_URL=https://YOUR_DOMAIN/api`.

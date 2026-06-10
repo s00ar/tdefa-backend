@@ -12,3 +12,8 @@ Notas:
 - `DB_AUTO_CREATE=true` solo si el usuario MySQL puede crear la base automaticamente.
 - `DB_SEED=true` solo si quieres cargar datos demo al arrancar.
 - Esta app no es estatica: para que partidos y planillas funcionen, el hosting debe soportar Node.js y MySQL.
+
+Plantillas utiles:
+
+- `backend/.env.hostinger.example` para el backend remoto
+- `frontend/.env.hostinger.example` para apuntar el frontend al dominio desplegado

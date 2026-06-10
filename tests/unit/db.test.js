@@ -9,6 +9,11 @@ test("getDbConfig merges overrides over defaults", () => {
   assert.equal(config.user, "root");
 });
 
+test("getDbConfig normalizes localhost to IPv4 for MySQL hosts", () => {
+  const config = getDbConfig({ host: "localhost" });
+  assert.equal(config.host, "127.0.0.1");
+});
+
 test("mapMatchRow parses JSON payloads from database rows", () => {
   const match = mapMatchRow({
     id: "m_test_1",
