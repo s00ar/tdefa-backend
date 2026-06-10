@@ -4,6 +4,7 @@ import { seedMatches, seedPlanilleros, seedSheets } from "./seed-data.js";
 
 let pool;
 let activeConfig;
+const DEFAULT_LOCAL_SOCKET_PATHS = ["/var/run/mysqld/mysqld.sock", "/run/mysqld/mysqld.sock", "/tmp/mysql.sock"];
 
 const serialize = (value) => JSON.stringify(value ?? null);
 const envFlagEnabled = (value, fallback = false) => {
@@ -26,7 +27,42 @@ const catalogId = (prefix, value) =>
 const normalizeDbHost = (value) => {
   const host = String(value ?? "").trim();
   if (!host) return "127.0.0.1";
-  return host.toLowerCase() === "localhost" ? "127.0.0.1" : host;
+  return host;
+};
+const isLocalDatabaseHost = (value) => ["localhost", "127.0.0.1", "::1"].includes(String(value ?? "").trim().toLowerCase());
+const unique = (values) => [...new Set(values.filter(Boolean))];
+const getSocketCandidates = () =>
+  unique([process.env.DB_SOCKET_PATH?.trim(), ...DEFAULT_LOCAL_SOCKET_PATHS]);
+const buildConnectionCandidates = (config, { includeDatabase = false } = {}) => {
+  const base = {
+    user: config.user,
+    password: config.password,
+    ...(includeDatabase ? { database: config.database } : {}),
+  };
+  const host = normalizeDbHost(config.host);
+
+  if (!isLocalDatabaseHost(host)) {
+    return [{ ...base, host, port: config.port }];
+  }
+
+  const candidates = [];
+  if (String(host).trim().toLowerCase() === "localhost") {
+    for (const socketPath of getSocketCandidates()) {
+      candidates.push({ ...base, socketPath });
+    }
+  }
+
+  candidates.push({
+    ...base,
+    host: host === "::1" ? "127.0.0.1" : host,
+    port: config.port,
+  });
+
+  return candidates;
+};
+const toTransport = (candidate) => {
+  const { database, ...transport } = candidate;
+  return transport;
 };
 
 const sameConfig = (left, right) =>
@@ -36,7 +72,8 @@ const sameConfig = (left, right) =>
   left.port === right.port &&
   left.user === right.user &&
   left.password === right.password &&
-  left.database === right.database;
+  left.database === right.database &&
+  JSON.stringify(left.connectionTransport ?? null) === JSON.stringify(right.connectionTransport ?? null);
 
 export const getDbConfig = (overrides = {}) => ({
   host: normalizeDbHost(overrides.host ?? process.env.DB_HOST ?? "127.0.0.1"),
@@ -46,13 +83,34 @@ export const getDbConfig = (overrides = {}) => ({
   database: overrides.database ?? process.env.DB_NAME ?? "planilleros-app",
 });
 
-const createAdminConnection = async (config) =>
-  mysql.createConnection({
-    host: config.host,
-    port: config.port,
+const resolveConnectionTransport = async (config) => {
+  if (config.connectionTransport) {
+    return config.connectionTransport;
+  }
+
+  let lastError;
+  for (const candidate of buildConnectionCandidates(config)) {
+    try {
+      const connection = await mysql.createConnection(candidate);
+      await connection.end();
+      config.connectionTransport = toTransport(candidate);
+      return config.connectionTransport;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError;
+};
+
+const createAdminConnection = async (config) => {
+  const connectionTransport = await resolveConnectionTransport(config);
+  return mysql.createConnection({
+    ...connectionTransport,
     user: config.user,
     password: config.password,
   });
+};
 
 const upsertPlanillero = async (db, item) => {
   await db.execute(
@@ -262,9 +320,9 @@ export const seedDatabase = async (db = getPool()) => {
 
 const databaseExists = async (config) => {
   try {
+    const connectionTransport = await resolveConnectionTransport(config);
     const connection = await mysql.createConnection({
-      host: config.host,
-      port: config.port,
+      ...connectionTransport,
       user: config.user,
       password: config.password,
       database: config.database,
@@ -300,9 +358,9 @@ const connectPool = async (config) => {
   }
 
   await closePool();
+  const connectionTransport = await resolveConnectionTransport(config);
   pool = mysql.createPool({
-    host: config.host,
-    port: config.port,
+    ...connectionTransport,
     user: config.user,
     password: config.password,
     database: config.database,
@@ -310,7 +368,7 @@ const connectPool = async (config) => {
     connectionLimit: 10,
     namedPlaceholders: true,
   });
-  activeConfig = config;
+  activeConfig = { ...config, connectionTransport };
   return pool;
 };
 
